@@ -6,12 +6,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useToast } from '@/hooks/use-toast';
+
+const TELEGRAM_API_URL = 'https://functions.poehali.dev/59f970e2-da16-4267-aac9-55e2212c560b';
 
 const Index = () => {
+  const { toast } = useToast();
   const [authStep, setAuthStep] = useState<'phone' | 'code' | '2fa' | 'authenticated'>('phone');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [twoFaCode, setTwoFaCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState('');
+  const [phoneCodeHash, setPhoneCodeHash] = useState('');
 
   const commands = [
     {
@@ -48,13 +55,113 @@ const Index = () => {
     { time: '14:28:03', action: 'Подключение к Telegram успешно', status: 'success' }
   ]);
 
-  const handleAuth = () => {
-    if (authStep === 'phone' && phone) {
-      setAuthStep('code');
-    } else if (authStep === 'code' && code) {
-      setAuthStep('2fa');
-    } else if (authStep === '2fa' && twoFaCode) {
-      setAuthStep('authenticated');
+  const handleAuth = async () => {
+    setLoading(true);
+    
+    try {
+      if (authStep === 'phone' && phone) {
+        const response = await fetch(TELEGRAM_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionId || `session_${Date.now()}`
+          },
+          body: JSON.stringify({
+            action: 'send_code',
+            phone: phone
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          setSessionId(data.session_id);
+          setPhoneCodeHash(data.phone_code_hash);
+          setAuthStep('code');
+          toast({
+            title: 'Код отправлен',
+            description: 'Проверьте Telegram для получения кода подтверждения'
+          });
+        } else {
+          toast({
+            title: 'Ошибка',
+            description: data.error || 'Не удалось отправить код',
+            variant: 'destructive'
+          });
+        }
+      } else if (authStep === 'code' && code) {
+        const response = await fetch(TELEGRAM_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionId
+          },
+          body: JSON.stringify({
+            action: 'verify_code',
+            phone: phone,
+            code: code,
+            phone_code_hash: phoneCodeHash
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.needs_password) {
+          setAuthStep('2fa');
+          toast({
+            title: 'Требуется 2FA',
+            description: 'Введите пароль двухфакторной аутентификации'
+          });
+        } else if (data.success) {
+          setAuthStep('authenticated');
+          toast({
+            title: 'Успешная авторизация',
+            description: 'Вы вошли в Telegram'
+          });
+        } else {
+          toast({
+            title: 'Ошибка',
+            description: data.error || 'Неверный код',
+            variant: 'destructive'
+          });
+        }
+      } else if (authStep === '2fa' && twoFaCode) {
+        const response = await fetch(TELEGRAM_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionId
+          },
+          body: JSON.stringify({
+            action: 'verify_password',
+            password: twoFaCode
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          setAuthStep('authenticated');
+          toast({
+            title: 'Добро пожаловать!',
+            description: `Вы вошли как ${data.user.first_name}`
+          });
+        } else {
+          toast({
+            title: 'Ошибка',
+            description: data.error || 'Неверный пароль',
+            variant: 'destructive'
+          });
+        }
+      }
+    } catch (error) {
+      toast({
+        title: 'Ошибка соединения',
+        description: 'Проверьте интернет-соединение',
+        variant: 'destructive'
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -118,12 +225,22 @@ const Index = () => {
 
               <Button 
                 onClick={handleAuth}
+                disabled={loading}
                 className="w-full bg-primary text-primary-foreground hover:bg-primary/90 terminal-glow"
               >
-                <Icon name="ArrowRight" size={16} className="mr-2" />
-                {authStep === 'phone' && 'ОТПРАВИТЬ КОД'}
-                {authStep === 'code' && 'ПОДТВЕРДИТЬ'}
-                {authStep === '2fa' && 'ВОЙТИ'}
+                {loading ? (
+                  <>
+                    <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+                    ЗАГРУЗКА...
+                  </>
+                ) : (
+                  <>
+                    <Icon name="ArrowRight" size={16} className="mr-2" />
+                    {authStep === 'phone' && 'ОТПРАВИТЬ КОД'}
+                    {authStep === 'code' && 'ПОДТВЕРДИТЬ'}
+                    {authStep === '2fa' && 'ВОЙТИ'}
+                  </>
+                )}
               </Button>
             </div>
 
